@@ -2086,7 +2086,21 @@
     const port =
         process.env.PORT || 8082;
 
-    server.listen(port, async () => {
+    
+    // Optional Turnstile token server (Lucrehulk protocol). GUI solvers run elsewhere.
+    const TURNSTILE_SERVER = process.env.TURNSTILE_SERVER || "";
+    if (TURNSTILE_SERVER) {
+        try {
+            const { getAvailableSolvers } = require("./turnstile-client.js");
+            getAvailableSolvers(TURNSTILE_SERVER)
+                .then((n) => rawLog(`[turnstile] server ${TURNSTILE_SERVER} — ${n} solver(s) available`))
+                .catch((e) => rawLog(`[turnstile] cannot reach ${TURNSTILE_SERVER}: ${e.message}`));
+        } catch (e) {
+            rawLog(`[turnstile] client load failed: ${e.message}`);
+        }
+    }
+
+server.listen(port, async () => {
         const codespaceName = process.env.CODESPACE_NAME;
         const domain = process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN || "app.github.dev";
 

@@ -17,6 +17,37 @@
   const fs = await import('fs');
   const path = await import('path');
   const ipc = parentPort || process;
+
+  // Cloudflare Turnstile token receiver (Lucrehulk token-server protocol).
+  // Requires external GUI solvers + Rust token-server running.
+  // Set TURNSTILE_SERVER=ws://host:8080 to enable.
+  let requestTurnstileToken = null;
+  try {
+    if (process.env.TURNSTILE_SERVER) {
+      const tc = require('./turnstile-client.js');
+      requestTurnstileToken = tc.requestTurnstileToken;
+    }
+  } catch (e) {
+    /* optional module */
+  }
+
+  async function fetchTurnstileToken(fields = {}) {
+    if (!requestTurnstileToken) return null;
+    try {
+      const res = await requestTurnstileToken({
+        fields,
+        userAgent: process.env.TURNSTILE_UA || "",
+        solverIdx: parseInt(process.env.TURNSTILE_SOLVER_IDX || "0", 10) || 0,
+        timeoutMs: parseInt(process.env.TURNSTILE_TIMEOUT || "45000", 10) || 45000
+      });
+      return res && res.token ? res.token : null;
+    } catch (e) {
+      try { sendParent({ type: 'log', id: 'turnstile', message: 'token fail: ' + (e && e.message) }); } catch {}
+      return null;
+    }
+  }
+
+
   const sendParent = function (message) {
     if (parentPort) {
       parentPort.postMessage(message);
@@ -1284,6 +1315,32 @@ const mainInterval = setInterval(function () {
     if (a) {
           switch (i) {
             case 1: {
+              // Optional Turnstile: pull a pre-solved token and inject before Play
+              if (requestTurnstileToken && !global.__turnstileInjected) {
+                global.__turnstileInjected = true;
+                fetchTurnstileToken({
+                  action: process.env.TURNSTILE_ACTION || ""
+                }).then((tok) => {
+                  if (!tok) return;
+                  try {
+                    const doc = global.document;
+                    if (doc) {
+                      let input = doc.querySelector('[name="cf-turnstile-response"]');
+                      if (!input) {
+                        input = doc.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'cf-turnstile-response';
+                        (doc.body || doc.documentElement).appendChild(input);
+                      }
+                      input.value = tok;
+                    }
+                    if (typeof global.turnstileCallback === 'function') {
+                      global.turnstileCallback(tok);
+                    }
+                    sendParent({ type: 'log', id: 'turnstile', message: 'token injected (' + tok.slice(0, 12) + '…)' });
+                  } catch (e) {}
+                }).catch(() => {});
+              }
               setValue(config.name)
               controller.press("Enter")
               log('Play button clicked!', config.name, global.location.hash)
